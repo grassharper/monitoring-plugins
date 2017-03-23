@@ -1,0 +1,99 @@
+#!/usr/bin/env python
+
+# check_rabbitmq_cluster
+#
+# Copyright (c) <2017>, <Andrei Buzoianu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Use the output of rabbitmqctl cluster_status to count number of nodes in cluster
+
+# Author: Andrei Buzoianu <andrei@buzoianu.info>
+# 2017-03-09 Version 0.1
+
+import sys
+from distutils.spawn import find_executable
+from os import getuid
+from re import sub
+from subprocess import check_output
+from erl_terms import decode
+from optparse import OptionParser
+
+def main ():
+    # Nagios status codes
+    STATE_OK = 0
+    STATE_WARNING = 1
+    STATE_CRITICAL = 2
+    STATE_UNKNOWN = 3
+
+    parser = OptionParser(usage="usage: %prog -w limit -c limit", version="%prog 0.1")
+    parser.add_option("-w", "--warning", dest="warn", metavar="INT", type="int")
+    parser.add_option("-c", "--critical", dest="crit", metavar="INT", type="int")
+    (options, args) = parser.parse_args()
+
+    if len(sys.argv[1:]) != 4:
+        parser.print_help()
+        sys.exit(STATE_UNKNOWN)
+
+    CRIT = int(options.crit)
+    WARN = int(options.warn)
+
+    if CRIT > WARN:
+        sys.stdout.write("Status : FAIL - Critical value can't be greater than warning value\n")
+        sys.exit(STATE_UNKNOWN)
+
+    check_command = ['/usr/sbin/rabbitmqctl', '-q', 'cluster_status']
+
+    # If non-root run with sudo
+    if getuid() != 0:
+        check_command.insert(0, find_executable('sudo'))
+
+    try:
+        status = check_output(check_command)
+    except Exception as exc:
+        sys.stdout.write("Status : FAIL\n")
+        sys.exit(STATE_UNKNOWN)
+
+    # Join into a single line string then add a period at the end to make it a valid erlang term
+    status = ''.join(status.splitlines()) + '.'
+    # Remove any literal @'s
+    status = sub('(?:\@)+', '',  status)
+
+    # Decode this into a python object
+    status = decode(status)
+
+    for item in status[0]:
+        if 'running_nodes' in item:
+            cno = len(item[1])
+
+    if cno <= CRIT:
+        sys.stdout.write("RabbitMQ Cluster CRITICAL - %s active nodes\n" % (cno))
+        sys.exit(STATE_CRITICAL)
+    if cno <= WARN:
+        sys.stdout.write("RabbitMQ Cluster WARNING - %s active nodes\n" % (cno))
+        sys.exit(STATE_WARNING)
+
+    sys.stdout.write("RabbitMQ Cluster OK - %s active nodes\n" % (cno))
+    sys.exit(STATE_OK)
+
+if __name__ == '__main__':
+    main()
