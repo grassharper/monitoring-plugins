@@ -28,13 +28,12 @@
 # Use the output of rabbitmqctl list_queues to read number of ready/unacknowledged messages in a specific queue
 
 # Author: Andrei Buzoianu <andrei@buzoianu.info>
-# 2017-03-23 Version 0.1
+# 2017-03-23 Version 0.2
 
 import sys
 from distutils.spawn import find_executable
 from os import getuid
 from re import sub
-from re import match
 from subprocess import check_output
 from optparse import OptionParser
 
@@ -93,7 +92,7 @@ def main ():
     queues = queues.splitlines()
 
     for queue in queues:
-	if match(r'^kraken', queue):
+        if queue.startswith(options.queue):
             values = queue.split("\t")
 
             if values[1] <= CRIT:
