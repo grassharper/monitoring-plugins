@@ -61,8 +61,8 @@ def main ():
     CRIT = int(options.crit)
     WARN = int(options.warn)
 
-    if CRIT > WARN:
-        sys.stdout.write("Status : FAIL - Critical value can't be greater than warning value\n")
+    if CRIT < WARN:
+        sys.stdout.write("Status : FAIL - Warning value can't be greater than critical value\n")
         sys.exit(STATE_UNKNOWN)
 
     # construct rabbitmqctl command
