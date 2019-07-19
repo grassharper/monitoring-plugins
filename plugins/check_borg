@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# 
+# check_borg
+#
+# Copyright (c) <2019>, <Andrei Buzoianu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Check the last backup date of a borg repository
+# Reads the BORG passphrase from HashiCorp Vault
+
+# Author: Andrei Buzoianu <andrei@buzoianu.info>
+# 2019-07-17 Version 0.1
+
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+WARN=1
+CRIT=2
+HOST='localhost'
+ENGINE='borg'
+
+current_time=$(date +'%s')
+
+usage(){
+    echo
+    echo "Check borg repository last backup date"
+    echo
+    echo "Usage:"
+    echo "$0 -w <WARNING DAYS> -c <CRITICAL DAYS> [-r repository] [-H hostname] [-s vault_server] -t <TOKEN> [-e engine] -n <NAME> [-h]"
+    echo
+    echo "Either specify -r flag or set BORG_REPO environment variable."
+    echo
+    echo "BORG_PASSPHRASE is stored in HashiCorp Vault. To read the passphrase,"
+    echo "please specify the Vault server, token, engine used and name of the backup."
+    echo "As you can see in the following vault get example, the path contains the hostname."
+    echo "Multiple key/value pairs are used, which determines the backup name and passphrase."
+    echo
+    cat >&2 <<-EOF
+$ vault kv get ${ENGINE}/${HOST}
+====== Metadata ======
+Key              Value
+---              -----
+created_time     2019-07-15T14:43:53.052189294Z
+deletion_time    n/a
+destroyed        false
+version          1
+
+==== Data ====
+Key      Value
+---      -----
+mysql    **********************
+html     **********************
+EOF
+    exit ${STATE_UNKNOWN}
+}
+
+while getopts ":hw:c:r:H:s:t:e:n:" opt; do
+    case $opt in
+        w)  WARN=${OPTARG}
+	        if ! [ "${WARN}" -ge 0 ] 2>/dev/null
+	        then
+		        echo "Only positive integers are allowed as warning values"
+                exit ${STATE_UNKNOWN}
+            fi
+            ;;
+        c)  CRIT=${OPTARG}
+	        if ! [ "${CRIT}" -ge 0 ] 2>/dev/null
+	        then
+		        echo "Only positive integers are allowed as critical values"
+                exit ${STATE_UNKNOWN}
+            fi
+            ;;
+        r)  export "BORG_REPO=${OPTARG}" ;;
+        H)  HOST=${OPTARG} ;;
+        e)  ENGINE=${OPTARG} ;;
+        s)  VSERVER=${OPTARG} ;;
+        t)  TOKEN=${OPTARG} ;;
+        n)  NAME=${OPTARG} ;;
+        h)  usage
+            ;;
+        \?) echo "Invalid option: -${OPTARG}"
+            usage
+            ;;
+        :)  echo "Option -${OPTARG} requires an argument."
+            usage
+            ;;
+    esac
+done
+
+if [ -z "$VAULT_ADDR" ] && [ ! "$VSERVER" ] 
+then
+    echo "UNKNOWN: either set the VAULT_ADDR environment variable, or pass the -s argument"
+    exit ${STATE_UNKNOWN}
+fi
+
+if [ ! "$TOKEN" ] || [ ! "$NAME" ] 
+then
+    echo "UNKNOWN: please set mandatory command line options"
+    exit ${STATE_UNKNOWN}
+fi
+
+if [ ! `which borg 2>/dev/null` ]
+then
+    echo "UNKNOWN: borg command not found."
+    exit ${STATE_UNKNOWN}
+fi
+
+if [ ! `which vault 2>/dev/null` ]
+then
+    echo "UNKNOWN: vault command not found."
+    exit ${STATE_UNKNOWN}
+fi
+
+if [ "$VSERVER" ]
+then
+    last="$(VAULT_ADDR=${VSERVER} VAULT_TOKEN=${TOKEN} BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
+else
+    last="$(VAULT_TOKEN=${TOKEN} BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
+fi
+
+if [ $? -ne 0 ]; then
+    echo "UNKNOWN: error retrieving last backup information."
+    exit ${STATE_UNKNOWN}
+fi
+
+OS=$(uname)
+case $OS in
+    'Linux')
+        last_time=$(date --date="${last}" +'%s')
+        ;;
+    'FreeBSD')
+        last_time=$(date -jf "%a, %Y-%m-%d %H:%M:%S" "${last}" +%s)
+        ;;
+    *)  ;;
+esac
+
+diff=$(( (current_time-last_time)/86400 ))
+
+if [ "${diff}" -gt "${CRIT}" ]
+then
+    echo "Backup Critical, last backup made on ${last}"
+    exit ${STATE_CRITICAL}
+elif [ "${diff}" -gt "${WARN}" ]
+then
+    echo "Backup Warning, last backup made on ${last}"
+    exit ${STATE_WARNING}
+else
+    echo "Backup OK, last backup made on ${last}"
+    exit ${STATE_OK}
+fi
