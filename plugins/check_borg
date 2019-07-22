@@ -140,9 +140,9 @@ fi
 
 if [ "$VSERVER" ]
 then
-    last="$(VAULT_ADDR=${VSERVER} VAULT_TOKEN=${TOKEN} BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
+    last="$(VAULT_ADDR=${VSERVER} VAULT_TOKEN=${TOKEN} BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
 else
-    last="$(VAULT_TOKEN=${TOKEN} BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
+    last="$(VAULT_TOKEN=${TOKEN} BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
 fi
 
 if [ $? -ne 0 ]; then
