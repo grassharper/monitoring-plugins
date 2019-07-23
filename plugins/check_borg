@@ -43,6 +43,11 @@ ENGINE='borg'
 
 current_time=$(date +'%s')
 
+if [ -z "${PATH-}" ]
+then 
+    export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+fi
+
 usage(){
     echo
     echo "Check borg repository last backup date"
