@@ -29,7 +29,7 @@
 # Reads the BORG passphrase from HashiCorp Vault
 
 # Author: Andrei Buzoianu <andrei@buzoianu.info>
-# 2019-07-17 Version 0.1
+# 2019-07-23 Version 0.2
 
 STATE_OK=0
 STATE_WARNING=1
@@ -145,14 +145,37 @@ fi
 
 if [ "$VSERVER" ]
 then
-    last="$(VAULT_ADDR=${VSERVER} VAULT_TOKEN=${TOKEN} BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
+    if result="$(VAULT_ADDR=${VSERVER} VAULT_TOKEN=${TOKEN} BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2>&1 )"
+    then
+        if [ $? -ne 0 ]; then
+            echo "UNKNOWN: error retrieving last backup information."
+            exit ${STATE_UNKNOWN}
+        fi
+        last=$result
+    else
+        stderr=$result
+        if [[ $stderr == *"lock.exclusive"* ]]
+        then
+            echo "WARNING: failed to acquire the lock, probably backup in progress."
+            exit ${STATE_WARNING}
+        fi
+    fi
 else
-    last="$(VAULT_TOKEN=${TOKEN} BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
-fi
-
-if [ $? -ne 0 ]; then
-    echo "UNKNOWN: error retrieving last backup information."
-    exit ${STATE_UNKNOWN}
+    if last="$(VAULT_TOKEN=${TOKEN} BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes BORG_PASSCOMMAND="vault kv get -field=${NAME} ${ENGINE}/${HOST}" borg list --sort timestamp --last 1 --format '{time}' 2> /dev/null)"
+    then
+        if [ $? -ne 0 ]; then
+            echo "UNKNOWN: error retrieving last backup information."
+            exit ${STATE_UNKNOWN}
+        fi
+        last=$result
+    else
+        stderr=$result
+        if [[ $stderr == *"lock.exclusive"* ]]
+        then
+            echo "WARNING: failed to acquire the lock, probably backup in progress."
+            exit ${STATE_WARNING}
+        fi
+    fi
 fi
 
 OS=$(uname)
