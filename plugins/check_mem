@@ -1,0 +1,147 @@
+#!/usr/local/bin/bash
+#
+# check_mem
+#
+# Copyright (c) <2020>, <Andrei Buzoianu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Check Memory on FreeBSD
+# Author: Andrei Buzoianu <andrei@buzoianu.info>
+# 2020-03-28 Version 0.1
+
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+WARN=90
+CRIT=95
+
+if [ -z "${PATH-}" ]
+then
+    export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+fi
+
+usage(){
+    echo
+    echo "Usage:"
+    echo "$0 -w <WARNING VALUE> -c <CRITICAL VALUE> [-h]"
+    echo
+    echo "Check Memory under FreeBSD"
+    echo "FreeBSD Memory Classes:"
+    echo
+    echo "Active: Contains pages \"actively\" (recently) referenced by userland."
+    echo "Inactive: Memory that was used by processes that are no longer running, but is cached since it may be used again. Can be cleared if more free memory is required."
+    echo "Laundry: Memory that must either be written (flushed) to swap, or to persistent storage (i.e., a filesystem)  before it can be freed. Split from old Inactive queue."
+    echo "Wired: Memory used by the kernel (includes the networking stack), kernel modules and the kernel heap, which cannot be swapped out. When using ZFS, ARC is counted as wired memory."
+    echo "Buffers: Memory used as a disk cache. Always 0 on systems using ZFS, since ARC is counted as wired memory."
+    echo "Free: Memory that is completely free available for use by the rest of the system. Other types such as Inactive and Buffers can become free if they are cleaned up."
+
+
+    exit ${STATE_UNKNOWN}
+}
+
+while getopts ":hw:c:" opt; do
+    case $opt in
+        w)  WARN=${OPTARG}
+                if ! [ "${WARN}" -ge 0 ] 2>/dev/null
+                then
+                        echo "Only positive integers are allowed as warning values"
+                exit ${STATE_UNKNOWN}
+            fi
+            ;;
+        c)  CRIT=${OPTARG}
+                if ! [ "${CRIT}" -ge 0 ] 2>/dev/null
+                then
+                        echo "Only positive integers are allowed as critical values"
+                exit ${STATE_UNKNOWN}
+            fi
+            ;;
+        h)  usage
+            ;;
+        \?) echo "Invalid option: -${OPTARG}"
+            usage
+            ;;
+        :)  echo "Option -${OPTARG} requires an argument."
+            usage
+            ;;
+    esac
+done
+
+# Determine the known information.
+# Don't get hw.usermem, it is basically the amount of memory (in bytes) which is not wired
+# hw.usermem = hw.physmem - (vm.stats.vm.v_wire_count * vm.stats.vm.v_page_size)
+
+# Amount of physical memory (in bytes)
+HW_MEM=$(/sbin/sysctl -n hw.physmem)
+
+# FreeBSD's VM operates on memory in units of pages, which have a size of 4KB on most platforms.
+PAGE_SIZE=$(/sbin/sysctl -n vm.stats.vm.v_page_size)
+
+# Total number of pages in system
+PAGE_COUNT=$(/sbin/sysctl -n vm.stats.vm.v_page_count)
+
+# Total memory
+TOTAL_MEM=$(( $PAGE_SIZE * $PAGE_COUNT ))
+
+# Active pages
+ACTIVE_MEM=$(( $(/sbin/sysctl -n vm.stats.vm.v_active_count) * $PAGE_SIZE))
+
+# Inactive pages
+INACTIVE_MEM=$(( $(/sbin/sysctl -n vm.stats.vm.v_inactive_count) * $PAGE_SIZE))
+
+# Pages eligible for laundering. The "laundry" counter was introduced in 2016.
+# For more information see https://reviews.freebsd.org/rS308474
+LAUNDRY_COUNT=$(/sbin/sysctl -n vm.stats.vm.v_laundry_count)
+if [ -n "$LAUNDRY_COUNT" ]; then
+    LAUNDRY_MEM=$(( $LAUNDRY_COUNT * $PAGE_SIZE ))
+else
+    LAUNDRY_MEM=0
+fi
+
+# Wired pages
+WIRED_MEM=$(( $(/sbin/sysctl -n vm.stats.vm.v_wire_count) * $PAGE_SIZE))
+
+# Physical memory used for buffers
+BUFFER_MEM=$(/sbin/sysctl -n vfs.bufspace)
+
+# Free pages
+FREE_MEM=$(( $(/sbin/sysctl -n vm.stats.vm.v_free_count) * $PAGE_SIZE ))
+
+# Calculate %
+AVAIL_MEM=$(( $INACTIVE_MEM + $LAUNDRY_MEM + $FREE_MEM ))
+USED_MEM=$(( $TOTAL_MEM - $AVAIL_MEM ))
+USED_PERCENT=$(echo "scale=2; $USED_MEM*100/$TOTAL_MEM" | bc)
+
+if (( $(echo "${USED_PERCENT} >= ${CRIT}" | bc -l) ))
+then
+    echo "CRITICAL - ${USED_MEM} used out of ${TOTAL_MEM} (${USED_PERCENT}% used)| available=${AVAIL_MEM} used=${USED_MEM} active=${ACTIVE_MEM} inactive=${ACTIVE_MEM} laundry=${LAUNDRY_MEM} wired=${WIRED_MEM} buffer=${BUFFER_MEM} free=${FREE_MEM} total=${TOTAL_MEM}[KB];${WARN};${CRIT};0;${HW_MEM}"
+    exit ${STATE_CRITICAL}
+elif (( $(echo "${USED_PERCENT} >= ${WARN}" | bc -l) ))
+then
+    echo "WARNING - ${USED_MEM} used out of ${TOTAL_MEM} (${USED_PERCENT}% used)| available=${AVAIL_MEM} used=${USED_MEM} active=${ACTIVE_MEM} inactive=${ACTIVE_MEM} laundry=${LAUNDRY_MEM} wired=${WIRED_MEM} buffer=${BUFFER_MEM} free=${FREE_MEM} total=${TOTAL_MEM}[KB];${WARN};${CRIT};0;${HW_MEM}"
+    exit ${STATE_WARNING}
+else
+    echo "OK - ${USED_MEM} used out of ${TOTAL_MEM} (${USED_PERCENT}% used)| available=${AVAIL_MEM} used=${USED_MEM} active=${ACTIVE_MEM} inactive=${ACTIVE_MEM} laundry=${LAUNDRY_MEM} wired=${WIRED_MEM} buffer=${BUFFER_MEM} free=${FREE_MEM} total=${TOTAL_MEM}[KB];${WARN};${CRIT};0;${HW_MEM}"
+    exit ${STATE_OK}
+fi
