@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+
+# check_domain
+#
+# Copyright (c) <2020>, <Andrei Buzoianu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Use python-whois to check domain expiration date
+
+# Author: Andrei Buzoianu <andrei@buzoianu.info>
+# 2020-07-06 Version 0.1
+
+import sys
+import whois
+from datetime import datetime
+from optparse import OptionParser
+
+def main ():
+    # Nagios status codes
+    STATE_OK = 0
+    STATE_WARNING = 1
+    STATE_CRITICAL = 2
+    STATE_UNKNOWN = 3
+
+    parser = OptionParser(usage="usage: %prog -w limit -c limit -d <DOMAIN>", version="%prog 0.1")
+    parser.add_option("-w", "--warning", dest="warn", metavar="INT", type="int", help="Number of days to trigger WARNING.")
+    parser.add_option("-c", "--critical", dest="crit", metavar="INT", type="int", help="Number of days to trigger CRITICAL.")
+    parser.add_option("-d", "--domain", dest="domain", metavar="STRING", type="string", help="Name of domain to be checked.")
+    (options, args) = parser.parse_args()
+
+    if len(sys.argv[1:]) != 6:
+        parser.print_help()
+        sys.exit(STATE_UNKNOWN)
+
+    CRIT = int(options.crit)
+    WARN = int(options.warn)
+
+    if CRIT > WARN:
+        sys.stdout.write("Status : FAIL - Critical value can't be greater than warning value\n")
+        sys.exit(STATE_UNKNOWN)
+
+    w = whois.whois(options.domain)
+    today = datetime.today()
+    diff = w.expiration_date - today
+
+    if diff.days <= CRIT:
+        sys.stdout.write("CRITICAL: Domain %s will expire in %s days.\n" % (options.domain, diff.days))
+        sys.exit(STATE_CRITICAL)
+    if diff.days <= WARN:
+        sys.stdout.write("WARNING: Domain %s will expire in %s days.\n" % (options.domain, diff.days))
+        sys.exit(STATE_WARNING)
+
+    sys.stdout.write("OK: Domain %s will expire in %s days.\n" % (options.domain, diff.days))
+    sys.exit(STATE_OK)
+
+if __name__ == '__main__':
+    main()
