@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# 
+# check_nginx
+#
+# Copyright (c) <2020>, <Andrei Buzoianu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Monitor Nginx status page
+
+# Author: Andrei Buzoianu <andrei@buzoianu.info>
+# 2020-07-27 Version 0.1
+
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+declare -a WARN
+declare -a CRIT
+
+WARN=(-1 -1 -1)
+CRIT=(-1 -1 -1)
+HOST='localhost'
+PORT=80
+PAGE="nginx_status"
+SECURE=false
+INVALID=false
+
+if [ -z "${PATH-}" ]
+then 
+    export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+fi
+
+usage(){
+    echo
+    echo "Check Nginx status page"
+    echo
+    echo "Usage:"
+    echo "$0 -w <WARNING VALUES> -c <CRITICAL VALUES> [-H hostname] [-P port] [-p page] [-S] [-k] [-h]"
+    echo
+    echo "Warning and critical parameters accept three values thresholds. "-1" will not generate an alert. Examples:"
+    echo 
+    echo "    $ #will generate WARNING and CRITICIAL alerts if when reaching 1000/2000 active connection, 100/200 req/s or 200/300 connections/s."
+    echo "    $ ./check_nginx -w 1000,100,200 -c 2000,200,300"
+    echo "    $ #will generate WARNING and CRITICAL alerts only in regards to the number of active connections."
+    echo "    $ ./check_nginx -w 1000,-1,-1 -c 2000,-1,-1"
+    echo "    $ #won't generate any alert. This is the default when no warning or critical values are provided."
+    echo "    $ ./check_nginx -w -1,-1,-1 -c -1,-1,-1"
+    echo 
+    echo "The ngx_http_stub_status_module module provides access to basic status information. The following status information is provided:"
+    echo "    Active connections: The current number of active client connections including Waiting connections."
+    echo "    accepts: The total number of accepted client connections."
+    echo "    handled: The total number of handled connections. Generally, the parameter value is the same as accepts unless some resource limits have been reached (for example, the worker_connections limit)."
+    echo "    requests: The total number of client requests."
+    echo "    Reading: The current number of connections where nginx is reading the request header."
+    echo "    Writing: The current number of connections where nginx is writing the response back to the client."
+    echo "    Waiting: The current number of idle client connections waiting for a request."
+    echo 
+
+    exit ${STATE_UNKNOWN}
+}
+
+while getopts ":hw:c:H:P:p:S:k:" opt; do
+    case $opt in
+        w)  readarray -td, WARN <<<"${OPTARG}"
+	    if ! [ "${WARN[0]}" -ge 0 ] 2>/dev/null
+	        then
+		        echo "Only positive integers are allowed as warning values for active connection"
+                exit ${STATE_UNKNOWN}
+            fi
+            ;;
+        c)  readarray -td, CRIT <<<"${OPTARG}"
+	    if ! [ "${CRIT[0]}" -ge 0 ] 2>/dev/null
+                then
+                    echo "Only positive integers are allowed as critical values for active connection"
+                exit ${STATE_UNKNOWN}
+            fi
+            ;;
+        H)  HOST=${OPTARG} ;;
+        P)  PORT=${OPTARG} ;;
+        p)  PAGE=${OPTARG} ;;
+        S)  SECURE=true    ;;
+        k)  INVALID=true   ;;
+        h)  usage
+            ;;
+        \?) echo "Invalid option: -${OPTARG}"
+            usage
+            ;;
+        :)  echo "Option -${OPTARG} requires an argument."
+            usage
+            ;;
+    esac
+done
+
+if [ "$SECURE" = true ]
+then
+    if [ "$INVALID" = true ] ; then
+        iout=`curl --silent --insecure https://${HOST}:${PORT}/${PAGE}`
+        sleep 1
+        fout=`curl --silent --insecure https://${HOST}:${PORT}/${PAGE}`
+    else
+        iout=`curl --silent https://${HOST}:${PORT}/${PAGE}`
+        sleep 1
+        fout=`curl --silent https://${HOST}:${PORT}/${PAGE}`
+    fi
+else
+    iout=`curl --silent http://${HOST}:${PORT}/${PAGE}`
+    sleep 1
+    fout=`curl --silent http://${HOST}:${PORT}/${PAGE}`
+fi
+
+ActiveConn=$(echo ${fout}|awk '{print $3}')
+accepts=$(expr $(echo ${fout}|awk '{print $8}') - $(echo ${iout}|awk '{print $8}'))
+handled=$(expr $(echo ${fout}|awk '{print $9}') - $(echo ${iout}|awk '{print $9}'))
+requests=$(expr $(echo ${fout}|awk '{print $10}') - $(echo ${iout}|awk '{print $10}'))
+reading=$(echo ${fout}|awk '{print $12}')
+writing=$(echo ${fout}|awk '{print $14}')
+waiting=$(echo ${fout}|awk '{print $16}')
+
+if [ ${CRIT[0]} -ne -1 ] && [ ${CRIT[1]} -eq -1 ] && [ ${CRIT[2]} -eq -1 ]
+then
+    if [ ${ActiveConn} -ge ${CRIT[0]} ]; then
+        echo "CRITICAL - active connections are critically high (${ActiveConn} active connections) | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_CRITICAL}
+    fi
+elif [ ${CRIT[0]} -ne -1 ] && [ ${CRIT[1]} -ne -1 ] && [ ${CRIT[2]} -ne -1 ]; then
+    if [ ${ActiveConn} -ge ${CRIT[0]} ] && [ ${requests} -ge ${CRIT[1]} ] && [ ${handled} -ge ${CRIT[2]} ]; then
+        echo "CRITICAL - active connections, request per second and connection per second are critically high ${ActiveConn}/${requests}/${handled} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_CRITICAL}
+    fi
+    if [ ${ActiveConn} -ge ${CRIT[0]} ] && [ ${requests} -ge ${CRIT[1]} ]; then
+        echo "CRITICAL - active connections and request per second are critically high ${ActiveConn}/${requests} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_CRITICAL}
+    fi
+    if [ ${ActiveConn} -ge ${CRIT[0]} ] && [ ${handled} -ge ${CRIT[2]} ]; then
+        echo "CRITICAL - active connections and connections per second are critically high ${ActiveConn}/${handled} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_CRITICAL}
+    fi
+    if [ ${requests} -ge ${CRIT[1]} ] && [ ${handled} -ge ${CRIT[2]} ]; then
+        echo "CRITICAL - requests per second and connections per second are critically high ${requests}/${handled} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_CRITICAL}
+    fi
+    if [ ${requests} -ge ${CRIT[1]} ]; then
+        echo "CRITICAL - requests per second are critically high ${requests} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_CRITICAL}
+    fi
+    if [ ${handled} -ge ${CRIT[2]} ]; then
+        echo "CRITICAL - connections per second are critically high ${handled} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_CRITICAL}
+    fi
+fi
+
+if [ ${WARN[0]} -ne -1 ] && [ ${WARN[1]} -eq -1 ] && [ ${WARN[2]} -eq -1 ]
+then
+    if [ ${ActiveConn} -ge ${WARN[0]} ]; then
+        echo "WARNING - active connections are high (${ActiveConn} active connections) | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_WARNING}
+    fi
+elif [ ${WARN[0]} -ne -1 ] && [ ${WARN[1]} -ne -1 ] && [ ${WARN[2]} -ne -1 ]; then
+    if [ ${ActiveConn} -ge ${WARN[0]} ] && [ ${requests} -ge ${WARN[1]} ] && [ ${handled} -ge ${WARN[2]} ]; then
+        echo "WARNING - active connections, request per second and connection per second are high ${ActiveConn}/${requests}/${handled} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_WARNING}
+    fi
+    if [ ${ActiveConn} -ge ${WARN[0]} ] && [ ${requests} -ge ${WARN[1]} ]; then
+        echo "WARNING - active connections and request per second are high ${ActiveConn}/${requests} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_WARNING}
+    fi
+    if [ ${ActiveConn} -ge ${WARN[0]} ] && [ ${handled} -ge ${WARN[2]} ]; then
+        echo "WARNING - active connections and connections per second are high ${ActiveConn}/${handled} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_WARNING}
+    fi
+    if [ ${requests} -ge ${WARN[1]} ] && [ ${handled} -ge ${WARN[2]} ]; then
+        echo "WARNING - requests per second and connections per second are high ${requests}/${handled} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_WARNING}
+    fi
+    if [ ${requests} -ge ${WARN[1]} ]; then
+        echo "WARNING - requests per second are high ${requests} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_WARNING}
+    fi
+    if [ ${handled} -ge ${WARN[2]} ]; then
+        echo "WARNING - connections per second are high ${handled} | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+        exit ${STATE_WARNING}
+    fi
+fi
+
+echo "OK - ${ActiveConn} active connections, ${requests} request per second and ${handled} connection per second | ActiveConn=${ActiveConn} Accepts=${accepts} Handled=${handled} Requests=${requests} Reading=${reading} Writing=${writing} Waiting=${waiting}"
+exit ${STATE_OK}
