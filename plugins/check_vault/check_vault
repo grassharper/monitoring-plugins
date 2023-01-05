@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# check_vault
+#
+# Copyright (c) <2022>, <Andrei Buzoianu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Check if Vault API is reachable
+#
+# Author: Andrei Buzoianu <andrei@buzoianu.info>
+# 2022-09-23 Version 0.1
+
+set -Eeuo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd -P)
+
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+TLS=false
+
+if [ -z "${PATH-}" ]
+then
+    export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+fi
+
+usage(){
+    echo
+    echo "Check if Vault API is reachable"
+    echo
+    echo "Usage:"
+    echo "$0 [-s vault_server] [-p vault_port] [-h]"
+    echo
+    echo "Either specify -s flag or set VAULT_ADDR environment variable."
+    echo
+    cat >&2 <<-EOF
+EOF
+    exit ${STATE_UNKNOWN}
+}
+
+while getopts ":hs:p:t" opt; do
+    case $opt in
+        s)  VSERVER=${OPTARG} ;;
+        p)  VPORT=${OPTARG} ;;
+        t)  TLS=true ;;
+        h)  usage
+            ;;
+        \?) echo "Invalid option: -${OPTARG}"
+            usage
+            ;;
+        :)  echo "Option -${OPTARG} requires an argument."
+            usage
+            ;;
+    esac
+done
+
+# main
+if [ ! `which curl 2>/dev/null` ]
+then
+    echo "UNKNOWN: curl command not found."
+    exit ${STATE_UNKNOWN}
+fi
+
+if declare -p VAULT_ADDR >&/dev/null ; then
+    status="$(curl -I -o /dev/null --connect-timeout 2 -s -w "%{http_code}\n" ${VAULT_ADDR}/v1/sys/health)"
+else
+    if ! declare VSERVER >&/dev/null ; then
+        echo "UNKNOWN: either set the VAULT_ADDR environment variable, or pass the -s argument"
+        exit ${STATE_UNKNOWN}
+    fi
+
+    if ${TLS} ; then
+        status="$(curl -I -o /dev/null --connect-timeout 2 -s -w "%{http_code}\n" https://${VSERVER}:${VPORT:-8200}/v1/sys/health)"
+    else
+        status="$(curl -I -o /dev/null --connect-timeout 2 -s -w "%{http_code}\n" http://${VSERVER}:${VPORT:-8200}/v1/sys/health)"
+    fi
+fi
+
+case $status in
+200)
+    echo "OK: Vault is initialized, unsealed, and active."
+    exit ${STATE_OK}
+    ;;
+429)
+    echo "OK: Vault is unsealed and standby."
+    exit ${STATE_OK}
+    ;;
+472)
+    echo "OK: Vault is in disaster recovery mode replication secondary and active."
+    exit ${STATE_OK}
+    ;;
+473)
+    echo "OK: Vault is a performance standby node."
+    exit ${STATE_OK}
+    ;;
+501)
+    echo "WARNING: Vault not initialized."
+    exit ${STATE_WARNING}
+    ;;
+503)
+    echo "CRITICAL: Vault is sealed."
+    exit ${STATE_CRITICAL}
+    ;;
+*)
+    echo "UNKNOWN: Vault is in an unknown state."
+    exit ${STATE_UNKNOWN}
+    ;;
+esac
+
+# END
