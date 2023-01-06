@@ -1,0 +1,136 @@
+#!/usr/bin/env python
+
+# check_redis
+#
+# Copyright (c) <2023>, <Andrei Buzoianu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# monitoring plugin for redis-server
+
+# Author: Andrei Buzoianu <andrei@buzoianu.info>
+# 2023-01-06 Version 0.1
+
+import sys
+import redis
+from optparse import OptionParser
+
+def get_hit_ratio(hits, misses, integer = False):
+   hit_ratio = 100 * hits / (hits + misses)
+
+   if integer:
+       return int(hit_ratio)
+   return hit_ratio
+
+def get_percent(value, total, integer = False):
+   percent = value / total * 100
+   
+   if integer:
+       return int(percent)
+   return percent
+
+def main ():
+    # Nagios status codes
+    STATE_OK = 0
+    STATE_WARNING = 1
+    STATE_CRITICAL = 2
+    STATE_UNKNOWN = 3
+
+    parser = OptionParser(usage="usage: %prog -H <HOST> -p <PORT> [-P <PASSWORD>] -d <DATABASE> [-t <TIMEOUT>] -w <WARNING> -c <CRITICAL> -a <ACTION>", version="%prog 0.1")
+    parser.add_option("-H", "--host", dest="host", metavar="STRING", type="string", default='127.0.0.1', help="Host to be checked.")
+    parser.add_option("-p", "--port", dest="port", metavar="INT", type="int", default=6379, help="Port number")
+    parser.add_option("-P", "--password", dest="password", metavar="STRING", type="string", help="Redis password.")
+    parser.add_option("-d", "--dbname", dest="db", metavar="STRING", type="string", default="0", help="Redis database name (default is db0).")
+    parser.add_option("-t", "--timeout", dest="time", metavar="INT", type="int", default=2, help="Number of seconds to wait before timing out.")
+    parser.add_option("-w", "--warning", dest="warn", metavar="INT", type="int", help="Warning value.")
+    parser.add_option("-c", "--critical", dest="crit", metavar="INT", type="int", help="Critical value.")
+    parser.add_option("-a", "--action", dest="action", metavar="STRING", type="choice", default="connect", help="Monitoring action.", choices=['connect', 'hits', 'memory'])
+    (options, args) = parser.parse_args()
+
+    if (not options.action == "connect") and (not options.warn or not options.crit):
+        if not options.warn:
+            sys.stdout.write("UNKNOWN: Warning level required\n")
+            sys.exit(STATE_UNKNOWN)
+        if not options.crit:
+            sys.stdout.write("UNKNOWN: Critical level required\n")
+            sys.exit(STATE_UNKNOWN)
+
+    if options.warn and options.crit:
+        WARN = int(options.warn)
+        CRIT = int(options.crit)
+
+        if (options.action == "memory") and (CRIT < WARN):
+            sys.stdout.write("UNKNOWN: Warning value can't be greater than critical value\n")
+            sys.exit(STATE_UNKNOWN)
+
+    if len(sys.argv[1:]) < 4:
+        parser.print_help()
+        sys.exit(STATE_UNKNOWN)
+
+    pool = redis.ConnectionPool(host = options.host, port = options.port , password = options.password, db = options.db, socket_timeout = options.time)
+    r = redis.StrictRedis(connection_pool=pool)
+    try:
+        r.ping()
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError, ConnectionRefusedError):
+        sys.stdout.write("UNKNOWN: Redis connection error!")
+        sys.exit(STATE_UNKNOWN)
+
+    info = r.info()
+
+    if options.action == "connect":
+        sys.stdout.write("OK: Redis version: %s, connected_clients: %s, uptime_in_days: %s, used_memory_human: %s\n" % (info.get('redis_version'), info.get('connected_clients'), info.get('uptime_in_days'), info.get('used_memory_human')))
+        sys.exit(STATE_OK)
+    elif options.action == "memory":
+        used_memory = info.get('used_memory')
+        used_memory_rss = info.get('used_memory_rss')
+        used_memory_peak = info.get('used_memory_peak')
+        total_system_memory = info.get('total_system_memory')
+        if used_memory > used_memory_rss:
+            sys.stdout.write("CRITICAL: Run out of RAM and part of your Redis data resides in SWAP | used_memory=%s used_memory_rss=%s used_memory_peak=%s total_system_memory=%s\n" % (used_memory, used_memory_rss, used_memory_peak, total_system_memory))
+            sys.exit(STATE_CRITICAL)
+        if get_percent(used_memory, total_system_memory, True) >= CRIT:
+            sys.stdout.write("CRITICAL: more than %s%% used memory | used_memory=%s used_memory_rss=%s used_memory_peak=%s total_system_memory=%s\n" % (CRIT, used_memory, used_memory_rss, used_memory_peak, total_system_memory))
+            sys.exit(STATE_CRITICAL)
+        if get_percent(used_memory, total_system_memory, True) >= WARN:
+            sys.stdout.write("WARNING: more than %s%% used memory | used_memory=%s used_memory_rss=%s used_memory_peak=%s total_system_memory=%s\n" % (WARN, used_memory, used_memory_rss, used_memory_peak, total_system_memory))
+            sys.exit(STATE_WARNING)
+        sys.stdout.write("OK: %s%% used memory | used_memory=%s used_memory_rss=%s used_memory_peak=%s total_system_memory=%s\n" % (get_percent(used_memory, total_system_memory), used_memory, used_memory_rss, used_memory_peak, total_system_memory))
+        sys.exit(STATE_OK)
+    elif options.action == "hits":
+        keyspace_hits = info.get('keyspace_hits')
+        keyspace_misses = info.get('keyspace_misses')
+        if keyspace_hits > 0 and keyspace_misses > 0:
+            if get_hit_ratio(keyspace_hits, keyspace_misses, True) <= CRIT:
+                sys.stdout.write("CRITICAL: less than %s%% hits | keyspace_hits=%s keyspace_misses=%s\n" % (CRIT, keyspace_hits, keyspace_misses))
+                sys.exit(STATE_CRITICAL)
+            if get_hit_ratio(keyspace_hits, keyspace_misses, True) <= WARN:
+                sys.stdout.write("WARNING: less than %s%% hits | keyspace_hits=%s keyspace_misses=%s\n" % (WARN, keyspace_hits, keyspace_misses))
+                sys.exit(STATE_WARNING)
+            sys.stdout.write("OK: %s%% hits | keyspace_hits=%s keyspace_misses=%s\n" % (get_hit_ratio(keyspace_hits, keyspace_misses), keyspace_hits, keyspace_misses))
+            sys.exit(STATE_OK)
+        else:
+            sys.stdout.write("OK: 0 hits | keyspace_hits=%s keyspace_misses=%s\n" % (keyspace_hits, keyspace_misses))
+            sys.exit(STATE_OK)
+
+
+if __name__ == '__main__':
+    main()
