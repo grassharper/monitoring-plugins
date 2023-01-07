@@ -34,7 +34,7 @@ The `INFO` command returns information and statistics about the server in a form
 
 ### check connection to Redis
 
-Aside from returning that the connection was successful, the output also container the number of client connections, uptime in days and user memory in human readable representation.
+Aside from returning that the connection was successful, the output also contains the number of client connections, uptime in days and user memory in human readable representation.
 
 ```bash
 $ ./check_redis -H 127.0.0.1 -P 1234
@@ -68,4 +68,126 @@ For ```2464291``` hits and ```942690``` misses, then that would mean you would d
 ```bash
 $ ./check_redis -H 127.0.0.1 -P 1234 -a hits -w 40 -c 30
 OK: 72.33063524569113% hits | keyspace_hits=2464291 keyspace_misses=942690
+```
+
+## Icinga2 configuration
+
+### command-plugins.conf
+```bash
+object CheckCommand "check_redis" {
+  import "plugin-check-command"
+
+  command = [ PluginDir + "/check_redis" ]
+
+  arguments = {
+    "--host"     = "$redis_dbhost$"
+    "--port"     = "$redis_dbport$"
+    "--password" = "$redis_dbpass$"
+    "--dbname"   = "$redis_dbname$"
+    "--timeout"  = "$redis_timeout$"
+    "--warning"  = "$redis_warning$"
+    "--critical" = "$redis_critical$"
+    "--action"   = "$redis_action$"
+  }
+
+  vars.redis_dbhost = "$host.address$"
+  vars.redis_timeout = 2
+}
+```
+### templates.conf
+```bash
+template Host "redis-host" {
+  import "generic-host"
+
+  vars.redis_dbname = "0"
+  vars.tcp_address = "$address$"
+  if (!"$host.vars.redis.dbport$") { vars.tcp_port = "6379" } else { vars.tcp_port = "$host.vars.redis.dbport$" }
+
+  check_command = "tcp"
+}
+```
+
+### services.conf
+
+```bash
+apply Service "tcp-redis-connection" {
+  import "generic-service"
+  check_command = "check_redis"
+  display_name = "Redis: Connection"
+  enable_perfdata = false
+
+  vars += host.vars
+
+  if (!vars.redis.dbport) { vars.redis.dbport = "6379" }
+  if (!vars.redis.dbname) { vars.redis.dbname = "0" }
+  if (!vars.redis.timeout) { vars.redis.timeout = 2 }
+
+  vars.redis_dbport = vars.redis.dbport
+  vars.redis_dbpass = vars.redis.dbpass
+  vars.redis_dbname = vars.redis.dbname
+  vars.redis_timeout = vars.redis.timeout
+  vars.redis_action = "connect"
+
+  assign where "redis" in host.vars.roles
+}
+
+apply Service "tcp-redis-memory" {
+  import "generic-service"
+  check_command = "check_redis"
+  display_name = "Redis: Memory"
+
+  vars += host.vars
+
+  if (!vars.redis.dbport) { vars.redis.dbport = "6379" }
+  if (!vars.redis.dbname) { vars.redis.dbname = "0" }
+  if (!vars.redis.timeout) { vars.redis.timeout = 2 }
+  if (!vars.redis.memory_wgreater) { vars.redis.memory_wgreater = 80 }
+  if (!vars.redis.memory_cgreater) { vars.redis.memory_cgreater = 90 }
+
+  vars.redis_dbport = vars.redis.dbport
+  vars.redis_dbpass = vars.redis.dbpass
+  vars.redis_dbname = vars.redis.dbname
+  vars.redis_timeout = vars.redis.timeout
+  vars.redis_warning = vars.redis.memory_wgreater
+  vars.redis_critical = vars.redis.memory_cgreater
+  vars.redis_action = "memory"
+
+  assign where "redis" in host.vars.roles
+}
+
+apply Service "tcp-redis-hitsratio" {
+  import "generic-service"
+  check_command = "check_redis"
+  display_name = "Redis: Hit Ratio"
+
+  vars += host.vars
+
+  if (!vars.redis.dbport) { vars.redis.dbport = "6379" }
+  if (!vars.redis.dbname) { vars.redis.dbname = "0" }
+  if (!vars.redis.timeout) { vars.redis.timeout = 2 }
+  if (!vars.redis.hits_wgreater) { vars.redis.hits_wgreater = 40 }
+  if (!vars.redis.hits_cgreater) { vars.redis.hits_cgreater = 30 }
+
+  vars.redis_dbport = vars.redis.dbport
+  vars.redis_dbpass = vars.redis.dbpass
+  vars.redis_dbname = vars.redis.dbname
+  vars.redis_timeout = vars.redis.timeout
+  vars.redis_warning = vars.redis.hits_wgreater
+  vars.redis_critical = vars.redis.hits_cgreater
+  vars.redis_action = "hits"
+
+  assign where "redis" in host.vars.roles
+}
+```
+
+### hosts.conf
+```bash
+object Host "my.redis.host" {
+  import "redis-host"
+  address = "127.0.0.1"
+
+  vars.redis.dbpass = "1234"
+
+  vars.roles = [ "redis" ]
+}
 ```
