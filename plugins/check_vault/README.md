@@ -19,7 +19,7 @@ $ ./check_vault -h
 Check if Vault API is reachable
 
 Usage:
-./check_vault [-s vault_server] [-p vault_port] [-h]
+./check_vault [-s vault_server] [-p vault_port] [-t] [-k] [-h]
 
 Either specify -s flag or set VAULT_ADDR environment variable.
 ```
