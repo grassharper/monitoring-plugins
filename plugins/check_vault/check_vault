@@ -40,6 +40,7 @@ STATE_CRITICAL=2
 STATE_UNKNOWN=3
 
 TLS=false
+INSECURE=false
 
 if [ -z "${PATH-}" ]
 then
@@ -51,7 +52,7 @@ usage(){
     echo "Check if Vault API is reachable"
     echo
     echo "Usage:"
-    echo "$0 [-s vault_server] [-p vault_port] [-h]"
+    echo "$0 [-s vault_server] [-p vault_port] [-t] [-k] [-h]"
     echo
     echo "Either specify -s flag or set VAULT_ADDR environment variable."
     echo
@@ -60,11 +61,12 @@ EOF
     exit ${STATE_UNKNOWN}
 }
 
-while getopts ":hs:p:t" opt; do
+while getopts ":hs:p:tk" opt; do
     case $opt in
         s)  VSERVER=${OPTARG} ;;
         p)  VPORT=${OPTARG} ;;
         t)  TLS=true ;;
+        k)  INSECURE=true ;;
         h)  usage
             ;;
         \?) echo "Invalid option: -${OPTARG}"
@@ -92,7 +94,11 @@ else
     fi
 
     if ${TLS} ; then
-        status="$(curl -I -o /dev/null --connect-timeout 2 -s -w "%{http_code}\n" https://${VSERVER}:${VPORT:-8200}/v1/sys/health)"
+        if ${INSECURE} ; then
+            status="$(curl -I -k -o /dev/null --connect-timeout 2 -s -w "%{http_code}\n" https://${VSERVER}:${VPORT:-8200}/v1/sys/health)"
+        else
+            status="$(curl -I -o /dev/null --connect-timeout 2 -s -w "%{http_code}\n" https://${VSERVER}:${VPORT:-8200}/v1/sys/health)"
+        fi
     else
         status="$(curl -I -o /dev/null --connect-timeout 2 -s -w "%{http_code}\n" http://${VSERVER}:${VPORT:-8200}/v1/sys/health)"
     fi
