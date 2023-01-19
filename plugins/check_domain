@@ -2,7 +2,7 @@
 
 # check_domain
 #
-# Copyright (c) <2020>, <Andrei Buzoianu>
+# Copyright (c) <2023>, <Andrei Buzoianu>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,7 @@
 # Use python-whois to check domain expiration date
 
 # Author: Andrei Buzoianu <andrei@buzoianu.info>
-# 2020-07-06 Version 0.1
+# 2023-01-19 Version 0.2
 
 import sys
 import whois
@@ -61,7 +61,10 @@ def main ():
 
     w = whois.whois(options.domain)
     today = datetime.today()
-    diff = w.expiration_date - today
+    if type(w.expiration_date) is datetime:
+        diff = w.expiration_date - today
+    else:
+        diff = w.expiration_date[0] - today
 
     if diff.days <= CRIT:
         sys.stdout.write("CRITICAL: Domain %s will expire in %s days.\n" % (options.domain, diff.days))
