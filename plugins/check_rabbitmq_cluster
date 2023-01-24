@@ -1,8 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # check_rabbitmq_cluster
 #
-# Copyright (c) <2017>, <Andrei Buzoianu>
+# Copyright (c) <2023>, <Andrei Buzoianu>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -28,14 +28,13 @@
 # Use the output of rabbitmqctl cluster_status to count number of nodes in cluster
 
 # Author: Andrei Buzoianu <andrei@buzoianu.info>
-# 2017-03-09 Version 0.1
+# 2023-01-20 Version 0.2
 
 import sys
 from distutils.spawn import find_executable
 from os import getuid
-from re import sub
+import json
 from subprocess import check_output
-from erl_terms import decode
 from optparse import OptionParser
 
 def main ():
@@ -45,7 +44,7 @@ def main ():
     STATE_CRITICAL = 2
     STATE_UNKNOWN = 3
 
-    parser = OptionParser(usage="usage: %prog -w limit -c limit", version="%prog 0.1")
+    parser = OptionParser(usage="usage: %prog -w limit -c limit", version="%prog 0.2")
     parser.add_option("-w", "--warning", dest="warn", metavar="INT", type="int")
     parser.add_option("-c", "--critical", dest="crit", metavar="INT", type="int")
     (options, args) = parser.parse_args()
@@ -61,7 +60,7 @@ def main ():
         sys.stdout.write("Status : FAIL - Critical value can't be greater than warning value\n")
         sys.exit(STATE_UNKNOWN)
 
-    check_command = ['/usr/sbin/rabbitmqctl', '-q', 'cluster_status']
+    check_command = ['/usr/sbin/rabbitmqctl', '-q', 'cluster_status', '--formatter', 'json']
 
     # If non-root run with sudo
     if getuid() != 0:
@@ -73,17 +72,11 @@ def main ():
         sys.stdout.write("Status : FAIL\n")
         sys.exit(STATE_UNKNOWN)
 
-    # Join into a single line string then add a period at the end to make it a valid erlang term
-    status = ''.join(status.splitlines()) + '.'
-    # Remove any literal @'s
-    status = sub('(?:\@)+', '',  status)
-
     # Decode this into a python object
-    status = decode(status)
+    status = json.loads(status)
 
-    for item in status[0]:
-        if 'running_nodes' in item:
-            cno = len(item[1])
+    # Count number of running nodes
+    cno = len(status["running_nodes"])
 
     if cno <= CRIT:
         sys.stdout.write("RabbitMQ Cluster CRITICAL - %s active nodes\n" % (cno))
