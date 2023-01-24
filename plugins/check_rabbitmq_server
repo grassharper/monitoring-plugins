@@ -1,8 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # check_rabbitmq_server
 #
-# Copyright (c) <2017>, <Andrei Buzoianu>
+# Copyright (c) <2023>, <Andrei Buzoianu>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -28,14 +28,13 @@
 # Use the output of rabbitmqctl status to get resource usage of this node
 
 # Author: Andrei Buzoianu <andrei@buzoianu.info>
-# 2017-03-28 Version 0.1
+# 2023-01-20 Version 0.2
 
 import sys
+import json
 from distutils.spawn import find_executable
 from os import getuid
-from re import sub
 from subprocess import check_output
-from erl_terms import decode
 from optparse import OptionParser
 
 def main ():
@@ -45,7 +44,7 @@ def main ():
     STATE_CRITICAL = 2
     STATE_UNKNOWN = 3
 
-    parser = OptionParser(usage="usage: %prog -w limit -c limit", version="%prog 0.1")
+    parser = OptionParser(usage="usage: %prog -t type -w limit -c limit", version="%prog 0.2")
     parser.add_option("-t", "--type",dest="type", metavar="STRING", type="string", help="type can be one of the following: memory, disk, sockets, processes or file_descriptors")
     parser.add_option("-w", "--warning", dest="warn", metavar="INT", type="int", help="warning percentage value")
     parser.add_option("-c", "--critical", dest="crit", metavar="INT", type="int", help="critical percentage value")
@@ -68,7 +67,7 @@ def main ():
         sys.stdout.write("Status : FAIL - Warning value can't be greater than critical value\n")
         sys.exit(STATE_UNKNOWN)
 
-    check_command = ['/usr/sbin/rabbitmqctl', '-q', 'status' ]
+    check_command = ['/usr/sbin/rabbitmqctl', '-q', 'status', '--formatter', "json"]
 
     # If non-root run with sudo
     if getuid() != 0:
@@ -80,103 +79,112 @@ def main ():
         sys.stdout.write("Status : FAIL\n")
         sys.exit(STATE_UNKNOWN)
 
-    # Join into a single line string then add a period at the end to make it a valid erlang term
-    status = ''.join(status.splitlines()) + '.'
-    # Remove any literal \n's since the erlang_version item has one in it
-    status = sub('(?:\\\\n)+', '',  status)
-
     # Decode this into a python object
-    status = decode(status)
+    status = json.loads(status)
 
     def percentage(value, whole):
         return 100 * float(value)/float(whole)
 
     def get_memory():
-        for item in status[0]:
-            if 'memory' in item:
-                for mem_stat in item[1]:
-                    if 'total' in mem_stat:
-                        tmem = mem_stat[1]
-            if 'vm_memory_limit' in item:
-                memlimit = item[1]
+        tmem_erlang = status["memory"]["total"]["rss"]
+        tmem_rss = status["memory"]["total"]["rss"]
+        tmem_allocated = status["memory"]["total"]["rss"]
 
-        mem = percentage(tmem, memlimit)
+        mem_allocated_unused = status["memory"]["allocated_unused"]
+        mem_atom = status["memory"]["atom"]
+        mem_binary = status["memory"]["binary"]
+        mem_code = status["memory"]["code"]
+        mem_connection_channels = status["memory"]["connection_channels"]
+        mem_connection_other = status["memory"]["connection_other"]
+        mem_connection_readers = status["memory"]["connection_readers"]
+        mem_connection_writers = status["memory"]["connection_writers"]
+        mem_metrics = status["memory"]["metrics"]
+        mem_mgmt_db = status["memory"]["mgmt_db"]
+        mem_mnesia = status["memory"]["mnesia"]
+        mem_msg_index = status["memory"]["msg_index"]
+        mem_other_ets = status["memory"]["other_ets"]
+        mem_other_proc = status["memory"]["other_proc"]
+        mem_other_system = status["memory"]["other_system"]
+        mem_plugins = status["memory"]["plugins"]
+        mem_queue_procs = status["memory"]["queue_procs"]
+        mem_queue_slave_procs = status["memory"]["queue_slave_procs"]
+        mem_quorum_ets = status["memory"]["quorum_ets"]
+        mem_quorum_queue_dlx_procs = status["memory"]["quorum_queue_dlx_procs"]
+        mem_quorum_queue_procs = status["memory"]["quorum_queue_procs"]
+        mem_reserved_unallocated = status["memory"]["reserved_unallocated"]
+        mem_stream_queue_coordinator_procs = status["memory"]["stream_queue_coordinator_procs"]
+        mem_stream_queue_procs = status["memory"]["stream_queue_procs"]
+        mem_stream_queue_replica_reader_procs = status["memory"]["stream_queue_replica_reader_procs"]
+
+        memlimit = status["vm_memory_high_watermark_limit"]
+
+        if status["vm_memory_calculation_strategy"] == 'erlang':
+            mem = percentage(tmem_erlang, memlimit)
+        elif status["vm_memory_calculation_strategy"] == "rss":
+            mem = percentage(tmem_rss, memlimit)
+        elif status["vm_memory_calculation_strategy"] == "allocated":
+            mem = percentage(tmem_allocated, memlimit)
+
         if mem >= CRIT:
-            sys.stdout.write("RabbitMQ Memory CRITICAL - more than %s%% used memory\n" % (CRIT))
+            sys.stdout.write("RabbitMQ Memory CRITICAL - more than %s%% used memory | vm_memory_high_watermark_limit=%s total_erlang=%s total_rss=%s total_allocated=%s allocated_unused=%s atom=%s binary=%s code=%s connection_channels=%s connection_other=%s connection_readers=%s connection_writers=%s metrics=%s mgmt_db=%s mnesia=%s msg_index=%s other_ets=%s other_proc=%s other_system=%s plugins=%s queue_procs=%s queue_slave_procs=%s quorum_ets=%s quorum_queue_dlx_procs=%s quorum_queue_procs=%s reserved_unallocated=%s stream_queue_coordinator_procs=%s stream_queue_procs=%s stream_queue_replica_reader_procs=%s\n" % (CRIT, memlimit, tmem_erlang, tmem_rss, tmem_allocated, mem_allocated_unused, mem_atom, mem_binary, mem_code, mem_connection_channels, mem_connection_other, mem_connection_readers, mem_connection_writers, mem_metrics, mem_mgmt_db, mem_mnesia, mem_msg_index, mem_other_ets, mem_other_proc, mem_other_system, mem_plugins, mem_queue_procs, mem_queue_slave_procs, mem_quorum_ets, mem_quorum_queue_dlx_procs, mem_quorum_queue_procs, mem_reserved_unallocated, mem_stream_queue_coordinator_procs, mem_stream_queue_procs, mem_stream_queue_replica_reader_procs))
             sys.exit(STATE_CRITICAL)
         if mem >= WARN:
-            sys.stdout.write("RabbitMQ Memory WARNING - more than %s%% used memory\n" % (WARN))
+            sys.stdout.write("RabbitMQ Memory WARNING - more than %s%% used memory | vm_memory_high_watermark_limit=%s total_erlang=%s total_rss=%s total_allocated=%s allocated_unused=%s atom=%s binary=%s code=%s connection_channels=%s connection_other=%s connection_readers=%s connection_writers=%s metrics=%s mgmt_db=%s mnesia=%s msg_index=%s other_ets=%s other_proc=%s other_system=%s plugins=%s queue_procs=%s queue_slave_procs=%s quorum_ets=%s quorum_queue_dlx_procs=%s quorum_queue_procs=%s reserved_unallocated=%s stream_queue_coordinator_procs=%s stream_queue_procs=%s stream_queue_replica_reader_procs=%s\n" % (WARN, memlimit, tmem_erlang, tmem_rss, tmem_allocated, mem_allocated_unused, mem_atom, mem_binary, mem_code, mem_connection_channels, mem_connection_other, mem_connection_readers, mem_connection_writers, mem_metrics, mem_mgmt_db, mem_mnesia, mem_msg_index, mem_other_ets, mem_other_proc, mem_other_system, mem_plugins, mem_queue_procs, mem_queue_slave_procs, mem_quorum_ets, mem_quorum_queue_dlx_procs, mem_quorum_queue_procs, mem_reserved_unallocated, mem_stream_queue_coordinator_procs, mem_stream_queue_procs, mem_stream_queue_replica_reader_procs))
             sys.exit(STATE_WARNING)
-        sys.stdout.write("RabbitMQ Memory OK - %s%% used memory\n" % (mem))
+        sys.stdout.write("RabbitMQ Memory OK - %s%% used memory | vm_memory_high_watermark_limit=%s total_erlang=%s total_rss=%s total_allocated=%s allocated_unused=%s atom=%s binary=%s code=%s connection_channels=%s connection_other=%s connection_readers=%s connection_writers=%s metrics=%s mgmt_db=%s mnesia=%s msg_index=%s other_ets=%s other_proc=%s other_system=%s plugins=%s queue_procs=%s queue_slave_procs=%s quorum_ets=%s quorum_queue_dlx_procs=%s quorum_queue_procs=%s reserved_unallocated=%s stream_queue_coordinator_procs=%s stream_queue_procs=%s stream_queue_replica_reader_procs=%s\n" % (mem, memlimit, tmem_erlang, tmem_rss, tmem_allocated, mem_allocated_unused, mem_atom, mem_binary, mem_code, mem_connection_channels, mem_connection_other, mem_connection_readers, mem_connection_writers, mem_metrics, mem_mgmt_db, mem_mnesia, mem_msg_index, mem_other_ets, mem_other_proc, mem_other_system, mem_plugins, mem_queue_procs, mem_queue_slave_procs, mem_quorum_ets, mem_quorum_queue_dlx_procs, mem_quorum_queue_procs, mem_reserved_unallocated, mem_stream_queue_coordinator_procs, mem_stream_queue_procs, mem_stream_queue_replica_reader_procs))
 
     def get_disk():
-        for item in status[0]:
-            if 'disk' + '_free' in item:
-                diskfree = item[1]
-            if 'disk' + '_free_limit' in item:
-                diskfreelimit = item[1]
+        diskfree = status["disk_free"]
+        diskfreelimit = status["disk_free_limit"]
+
         disk = percentage(diskfreelimit, diskfree)
         if disk >= CRIT:
-            sys.stdout.write("RabbitMQ Disk CRITICAL - limit reached %s%% of free disk\n" % (CRIT))
+            sys.stdout.write("RabbitMQ Disk CRITICAL - limit reached %s%% of free disk | diskfree=%s diskfreelimit=%s\n" % (CRIT, diskfree, diskfreelimit))
             sys.exit(STATE_CRITICAL)
         if disk >= WARN:
-            sys.stdout.write("RabbitMQ Disk WARNING - limit reached %s%% of free disk\n" % (WARN))
+            sys.stdout.write("RabbitMQ Disk WARNING - limit reached %s%% of free disk| diskfree=%s diskfreelimit=%s\n" % (WARN, diskfree, diskfreelimit))
             sys.exit(STATE_WARNING)
-        sys.stdout.write("RabbitMQ Memory OK - %s%% of free disk\n" % (disk))
+        sys.stdout.write("RabbitMQ Memory OK - %s%% of free disk | diskfree=%s diskfreelimit=%s\n" % (disk, diskfree, diskfreelimit))
 
     def get_sockets():
-        for item in status[0]:
-            if 'file_descriptors' in item:
-                for sockets in item[1]:
-                    if 'sockets_limit' in sockets:
-                        stotal = sockets[1]
-                    if 'sockets_used' in sockets:
-                        sused = sockets[1]
+        stotal = status["file_descriptors"]["sockets_limit"]
+        sused = status["file_descriptors"]["sockets_used"]
+
         sockets = percentage(sused, stotal)
         if sockets >= CRIT:
-            sys.stdout.write("RabbitMQ Sockets CRITICAL - more than %s%% used sockets\n" % (CRIT))
+            sys.stdout.write("RabbitMQ Sockets CRITICAL - more than %s%% used sockets | sockets_used=%s sockets_limit=%s\n" % (CRIT, sused, stotal))
             sys.exit(STATE_CRITICAL)
         if sockets >= WARN:
-            sys.stdout.write("RabbitMQ Sockets WARNING - more than %s%% used sockets\n" % (WARN))
+            sys.stdout.write("RabbitMQ Sockets WARNING - more than %s%% used sockets | sockets_used=%s sockets_limit=%s\n" % (WARN, sused, stotal))
             sys.exit(STATE_WARNING)
-        sys.stdout.write("RabbitMQ Sockets OK - %s%% used sockets\n" % (sockets))
+        sys.stdout.write("RabbitMQ Sockets OK - %s%% used sockets | sockets_used=%s sockets_limit=%s\n" % (sockets, sused, stotal))
 
     def get_processes():
-        for item in status[0]:
-            if 'processes' in item:
-                for process in item[1]:
-                    if 'limit' in process:
-                        ptotal = process[1]
-                        print ptotal
-                    if 'used' in process:
-                        pused = process[1]
-                        print pused
+        ptotal = status["processes"]["limit"]
+        pused = status["processes"]["used"]
+
         processes = percentage(pused, ptotal)
         if processes >= CRIT:
-            sys.stdout.write("RabbitMQ Processes CRITICAL - more than %s%% used processes\n" % (CRIT))
+            sys.stdout.write("RabbitMQ Processes CRITICAL - more than %s%% used processes | processes_used=%s processes_limit=%s\n" % (CRIT, pused, ptotal))
             sys.exit(STATE_CRITICAL)
         if processes >= WARN:
-            sys.stdout.write("RabbitMQ Processes WARNING - more than %s%% used processes\n" % (WARN))
+            sys.stdout.write("RabbitMQ Processes WARNING - more than %s%% used processes | processes_used=%s processes_limit=%s\n" % (WARN, pused, ptotal))
             sys.exit(STATE_WARNING)
-        sys.stdout.write("RabbitMQ Processes OK - %s%% used processes\n" % (processes))
+        sys.stdout.write("RabbitMQ Processes OK - %s%% used processes | processes_used=%s processes_limit=%s\n" % (processes, pused, ptotal))
 
 
     def get_file_descriptors():
-        for item in status[0]:
-            if 'file_descriptors' in item:
-                for file_descriptors in item[1]:
-                    if 'total_limit' in file_descriptors:
-                        fdtotal = file_descriptors[1]
-                    if 'total_used' in file_descriptors:
-                        fdused = file_descriptors[1]
+        fdtotal = status["file_descriptors"]["total_limit"]
+        fdused = status["file_descriptors"]["total_used"]
+
         fd = percentage(fdused, fdtotal)
         if fd >= CRIT:
-            sys.stdout.write("RabbitMQ File Descriptors CRITICAL - more than %s%% used file descriptors\n" % (CRIT))
+            sys.stdout.write("RabbitMQ File Descriptors CRITICAL - more than %s%% used file descriptors | fd_total_used=%s fd_total_limit=%s\n" % (CRIT, fdused, fdtotal))
             sys.exit(STATE_CRITICAL)
         if fd >= WARN:
-            sys.stdout.write("RabbitMQ File Descriptors WARNING - more than %s%% used file descriptors\n" % (WARN))
+            sys.stdout.write("RabbitMQ File Descriptors WARNING - more than %s%% used file descriptors | fd_total_used=%s fd_total_limit=%s\n" % (WARN, fdused, fdtotal))
             sys.exit(STATE_WARNING)
-        sys.stdout.write("RabbitMQ File Descriptors OK - %s%% used file descriptors\n" % (fd))
+        sys.stdout.write("RabbitMQ File Descriptors OK - %s%% used file descriptors | fd_total_used=%s fd_total_limit=%s\n" % (fd, fdused, fdtotal))
 
     # map the inputs to the function blocks
     type = {    'memory' : get_memory,
