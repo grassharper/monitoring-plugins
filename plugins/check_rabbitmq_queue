@@ -1,8 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # check_rabbitmq_queue
 #
-# Copyright (c) <2017>, <Andrei Buzoianu>
+# Copyright (c) <2023>, <Andrei Buzoianu>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -28,12 +28,12 @@
 # Use the output of rabbitmqctl list_queues to read number of ready/unacknowledged messages in a specific queue
 
 # Author: Andrei Buzoianu <andrei@buzoianu.info>
-# 2017-03-23 Version 0.2
+# 2023-01-21 Version 0.3
 
 import sys
+import json
 from distutils.spawn import find_executable
 from os import getuid
-from re import sub
 from subprocess import check_output
 from optparse import OptionParser
 
@@ -44,7 +44,7 @@ def main ():
     STATE_CRITICAL = 2
     STATE_UNKNOWN = 3
 
-    parser = OptionParser(usage="usage: %prog -w limit -c limit", version="%prog 0.1")
+    parser = OptionParser(usage="usage: %prog [-r] [-u] -p vhost -q queue -w limit -c limit", version="%prog 0.3")
     parser.add_option("-r", "--ready", action="store_true", dest="ready", help="get number of ready messages (I'm hunting wabbits)")
     parser.add_option("-u", "--unacked", action="store_true", dest="unacked", help="get number of unacknowledged messages")
     parser.add_option("-p", "--vhost", dest="vhost", metavar="STRING", type="string")
@@ -65,15 +65,18 @@ def main ():
         sys.exit(STATE_UNKNOWN)
 
     # construct rabbitmqctl command
-    check_command = ['/usr/sbin/rabbitmqctl', '-q', 'list_queues', 'name']
+    check_command = ['/usr/sbin/rabbitmqctl', '-q', 'list_queues', 'name', 'messages_ready', 'messages_unacknowledged', 'messages',
+                     'messages_ready_ram', 'messages_unacknowledged_ram', 'messages_ram', 'messages_persistent', 'message_bytes',
+                     'message_bytes_ready', 'message_bytes_unacknowledged', 'message_bytes_ram', 'message_bytes_persistent',
+                     'disk_reads', 'disk_writes', 'consumers', 'memory', '--formatter', 'json']
 
     if options.ready:
         messages = 'ready'
-        check_command.append('messages_ready')
+        check_messages = 'messages_ready'
 
     if options.unacked:
         messages = 'unacknowledged'
-        check_command.append('messages_unacknowledged')
+        check_messages = 'messages_unacknowledged'
 
     # match given vhost    
     check_command.append('-p')
@@ -89,20 +92,20 @@ def main ():
         sys.stdout.write("Status : FAIL\n")
         sys.exit(STATE_UNKNOWN)
 
-    queues = queues.splitlines()
+    # Decode this into a python object
+    queues = json.loads(queues)
 
     for queue in queues:
-        if queue.startswith(options.queue):
-            values = queue.split("\t")
+        if queue["name"].startswith(options.queue):
 
-            if values[1] <= CRIT:
-                sys.stdout.write("RabbitMQ CRITICAL - %s %s messages \n" % (values[1], messages))
+            if queue[check_messages] >= CRIT:
+                sys.stdout.write("RabbitMQ %s queue CRITICAL - %s %s messages | name=%s messages_ready=%s messages_unacknowledged=%s messages=%s messages_ready_ram=%s messages_unacknowledged_ram=%s messages_ram=%s messages_persistent=%s message_bytes=%s message_bytes_ready=%s message_bytes_unacknowledged=%s message_bytes_ram=%s message_bytes_persistent=%s disk_reads=%s disk_writes=%s consumers=%s memory=%s\n" % (queue["name"], queue[check_messages], messages, queue["name"], queue["messages_ready"], queue["messages_unacknowledged"], queue["messages"], queue["messages_ready_ram"], queue["messages_unacknowledged_ram"], queue["messages_ram"], queue["messages_persistent"], queue["message_bytes"], queue["message_bytes_ready"], queue["message_bytes_unacknowledged"], queue["message_bytes_ram"], queue["message_bytes_persistent"], queue["disk_reads"], queue["disk_writes"], queue["consumers"], queue["memory"]))
                 sys.exit(STATE_CRITICAL)
-            if values[1] <= WARN:
-                sys.stdout.write("RabbitMQ WARNING - %s %s messages \n" % (values[1], messages))
+            if queue[check_messages] >= WARN:
+                sys.stdout.write("RabbitMQ %s queue WARNING - %s %s messages | name=%s messages_ready=%s messages_unacknowledged=%s messages=%s messages_ready_ram=%s messages_unacknowledged_ram=%s messages_ram=%s messages_persistent=%s message_bytes=%s message_bytes_ready=%s message_bytes_unacknowledged=%s message_bytes_ram=%s message_bytes_persistent=%s disk_reads=%s disk_writes=%s consumers=%s memory=%s\n" % (queue["name"], queue[check_messages], messages, queue["name"], queue["messages_ready"], queue["messages_unacknowledged"], queue["messages"], queue["messages_ready_ram"], queue["messages_unacknowledged_ram"], queue["messages_ram"], queue["messages_persistent"], queue["message_bytes"], queue["message_bytes_ready"], queue["message_bytes_unacknowledged"], queue["message_bytes_ram"], queue["message_bytes_persistent"], queue["disk_reads"], queue["disk_writes"], queue["consumers"], queue["memory"]))
                 sys.exit(STATE_WARNING)
 
-            sys.stdout.write("RabbitMQ OK - %s %s messages\n" % (values[1], messages))
+            sys.stdout.write("RabbitMQ %s queue OK - %s %s messages | name=%s messages_ready=%s messages_unacknowledged=%s messages=%s messages_ready_ram=%s messages_unacknowledged_ram=%s messages_ram=%s messages_persistent=%s message_bytes=%s message_bytes_ready=%s message_bytes_unacknowledged=%s message_bytes_ram=%s message_bytes_persistent=%s disk_reads=%s disk_writes=%s consumers=%s memory=%s\n" % (queue["name"], queue[check_messages], messages, queue["name"], queue["messages_ready"], queue["messages_unacknowledged"], queue["messages"], queue["messages_ready_ram"], queue["messages_unacknowledged_ram"], queue["messages_ram"], queue["messages_persistent"], queue["message_bytes"], queue["message_bytes_ready"], queue["message_bytes_unacknowledged"], queue["message_bytes_ram"], queue["message_bytes_persistent"], queue["disk_reads"], queue["disk_writes"], queue["consumers"], queue["memory"]))
             sys.exit(STATE_OK)
 
 if __name__ == '__main__':
