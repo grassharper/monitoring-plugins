@@ -26,6 +26,8 @@ Options:
                         Critical value.
   -a STRING, --action=STRING
                         Monitoring action.
+  -s, --secure
+                        Connect to Redis via SSL.
 ```
 
 ## examples
@@ -88,6 +90,7 @@ object CheckCommand "check_redis" {
     "--warning"  = "$redis_warning$"
     "--critical" = "$redis_critical$"
     "--action"   = "$redis_action$"
+    "--secure"   = "$redis_secure$"
   }
 
   vars.redis_dbhost = "$host.address$"
@@ -121,11 +124,13 @@ apply Service "tcp-redis-connection" {
   if (!vars.redis.dbport) { vars.redis.dbport = "6379" }
   if (!vars.redis.dbname) { vars.redis.dbname = "0" }
   if (!vars.redis.timeout) { vars.redis.timeout = 2 }
+  if (!vars.redis.secure) { vars.redis.secure = true }
 
   vars.redis_dbport = vars.redis.dbport
   vars.redis_dbpass = vars.redis.dbpass
   vars.redis_dbname = vars.redis.dbname
   vars.redis_timeout = vars.redis.timeout
+  vars.redis_secure = vars.redis.secure
   vars.redis_action = "connect"
 
   assign where "redis" in host.vars.roles
@@ -141,6 +146,7 @@ apply Service "tcp-redis-memory" {
   if (!vars.redis.dbport) { vars.redis.dbport = "6379" }
   if (!vars.redis.dbname) { vars.redis.dbname = "0" }
   if (!vars.redis.timeout) { vars.redis.timeout = 2 }
+  if (!vars.redis.secure) { vars.redis.secure = true }
   if (!vars.redis.memory_wgreater) { vars.redis.memory_wgreater = 80 }
   if (!vars.redis.memory_cgreater) { vars.redis.memory_cgreater = 90 }
 
@@ -148,6 +154,7 @@ apply Service "tcp-redis-memory" {
   vars.redis_dbpass = vars.redis.dbpass
   vars.redis_dbname = vars.redis.dbname
   vars.redis_timeout = vars.redis.timeout
+  vars.redis_secure = vars.redis.secure
   vars.redis_warning = vars.redis.memory_wgreater
   vars.redis_critical = vars.redis.memory_cgreater
   vars.redis_action = "memory"
@@ -165,6 +172,7 @@ apply Service "tcp-redis-hitsratio" {
   if (!vars.redis.dbport) { vars.redis.dbport = "6379" }
   if (!vars.redis.dbname) { vars.redis.dbname = "0" }
   if (!vars.redis.timeout) { vars.redis.timeout = 2 }
+  if (!vars.redis.secure) { vars.redis.secure = true }
   if (!vars.redis.hits_wgreater) { vars.redis.hits_wgreater = 40 }
   if (!vars.redis.hits_cgreater) { vars.redis.hits_cgreater = 30 }
 
@@ -172,6 +180,7 @@ apply Service "tcp-redis-hitsratio" {
   vars.redis_dbpass = vars.redis.dbpass
   vars.redis_dbname = vars.redis.dbname
   vars.redis_timeout = vars.redis.timeout
+  vars.redis_secure = vars.redis.secure
   vars.redis_warning = vars.redis.hits_wgreater
   vars.redis_critical = vars.redis.hits_cgreater
   vars.redis_action = "hits"
