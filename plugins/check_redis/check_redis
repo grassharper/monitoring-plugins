@@ -28,7 +28,7 @@
 # monitoring plugin for redis-server
 
 # Author: Andrei Buzoianu <andrei@buzoianu.info>
-# 2023-01-06 Version 0.1
+# 2023-11-22 Version 0.2
 
 import sys
 import redis
@@ -64,6 +64,7 @@ def main ():
     parser.add_option("-w", "--warning", dest="warn", metavar="INT", type="int", help="Warning value.")
     parser.add_option("-c", "--critical", dest="crit", metavar="INT", type="int", help="Critical value.")
     parser.add_option("-a", "--action", dest="action", metavar="STRING", type="choice", default="connect", help="Monitoring action.", choices=['connect', 'hits', 'memory'])
+    parser.add_option("-s", "--secure", action="store_true", default=True, dest="secure", help="Connecting to a Redis via SSL.")
     (options, args) = parser.parse_args()
 
     if (not options.action == "connect") and (not options.warn or not options.crit):
@@ -86,7 +87,11 @@ def main ():
         parser.print_help()
         sys.exit(STATE_UNKNOWN)
 
-    pool = redis.ConnectionPool(host = options.host, port = options.port , password = options.password, db = options.db, socket_timeout = options.time)
+    if options.secure:
+        pool = redis.ConnectionPool(host = options.host, port = options.port , password = options.password, db = options.db, socket_timeout = options.time, connection_class=redis.SSLConnection)
+    else:
+        pool = redis.ConnectionPool(host = options.host, port = options.port , password = options.password, db = options.db, socket_timeout = options.time)
+
     r = redis.StrictRedis(connection_pool=pool)
     try:
         r.ping()
