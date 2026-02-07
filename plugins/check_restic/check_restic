@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+
+# check_restic
+#
+# Copyright (c) <2017>, <Andrei Buzoianu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Use the output of restic snapshot to check when was the last backup made
+# Restic passwords are kept in Hashicorp Vault.
+# The path for accessing secrets in Vault is structured as follows: secret engine name / repository name / client name / project name / SSH host alias / hostname
+
+# Author: Andrei Buzoianu <andrei@buzoianu.info>
+# 2026-02-07 Version 0.8
+
+import sys
+import os
+import json
+from datetime import datetime
+from dateutil.parser import parse
+from shutil import which
+from subprocess import check_output
+from optparse import OptionParser
+
+
+def main():
+    # Nagios status codes
+    STATE_OK = 0
+    STATE_WARNING = 1
+    STATE_CRITICAL = 2
+    STATE_UNKNOWN = 3
+
+    parser = OptionParser(
+        usage="usage: %prog -w limit -c limit -r <REPOSITORY> -H <HOSTNAME> -s <VAULT-SERVER> -t <TOKEN> -e <ENGINE> -C <CLIENT> -R <REMOTE> -n <NAME>",
+        version="%prog 0.1",
+    )
+    parser.add_option(
+        "-w",
+        "--warning",
+        dest="warn",
+        metavar="INT",
+        type="int",
+        help="Number of days to trigger WARNING.",
+    )
+    parser.add_option(
+        "-c",
+        "--critical",
+        dest="crit",
+        metavar="INT",
+        type="int",
+        help="Number of days to trigger CRITICAL.",
+    )
+    parser.add_option(
+        "-r",
+        "--repository",
+        dest="repo",
+        metavar="STRING",
+        type="string",
+        help="Stored locally, or on some remote server.",
+    )
+    parser.add_option(
+        "-H",
+        "--hostname",
+        dest="host",
+        metavar="STRING",
+        type="string",
+        help="In Vault, the path contains the hostname. Multiple key/value pairs can be used, which determines the backup name and passphrase.",
+    )
+    parser.add_option(
+        "-s",
+        "--vault-server",
+        dest="vserver",
+        metavar="STRING",
+        type="string",
+        help="RESTIC_PASSWORD is stored in HashiCorp Vault. To read the passphrase, please specify the Vault server.",
+    )
+    parser.add_option(
+        "-t",
+        "--token",
+        dest="token",
+        metavar="STRING",
+        type="string",
+        help="Specify Vault token.",
+    )
+    parser.add_option(
+        "-e",
+        "--engine",
+        dest="engine",
+        metavar="STRING",
+        type="string",
+        help="Specify Vault engine.",
+    )
+    parser.add_option(
+        "-C",
+        "--client",
+        dest="client",
+        metavar="STRING",
+        type="string",
+        help="Specify Client.",
+    )
+    parser.add_option(
+        "-P",
+        "--project",
+        dest="project",
+        metavar="STRING",
+        type="string",
+        help="Specify Project.",
+    )
+    parser.add_option(
+        "-R",
+        "--remote",
+        dest="remote",
+        metavar="STRING",
+        type="string",
+        help="Specify Remote Server Alias.",
+    )
+    parser.add_option(
+        "-n",
+        "--name",
+        dest="name",
+        metavar="STRING",
+        type="string",
+        help="Specify name of the backup.",
+    )
+    (options, args) = parser.parse_args()
+
+    if len(sys.argv[1:]) != 22:
+        parser.print_help()
+        sys.exit(STATE_UNKNOWN)
+
+    CRIT = int(options.crit)
+    WARN = int(options.warn)
+
+    if CRIT < WARN:
+        sys.stdout.write(
+            "Status : FAIL - Warning value can't be greater than critical value\n"
+        )
+        sys.exit(STATE_UNKNOWN)
+
+    try:
+        options.project
+    except NameError:
+        options.project = None
+
+    if options.project is None:
+        vault_command = [
+            "/usr/local/bin/vault",
+            "kv",
+            "get",
+            "-field=%s" % options.name,
+            "%s/repositories/%s/%s/%s"
+            % (options.engine, options.client, options.remote, options.host),
+        ]
+    else:
+        vault_command = [
+            "/usr/local/bin/vault",
+            "kv",
+            "get",
+            "-field=%s" % options.name,
+            "%s/repositories/%s/%s/%s/%s"
+            % (
+                options.engine,
+                options.client,
+                options.project,
+                options.remote,
+                options.host,
+            ),
+        ]
+
+    check_command = [
+        "/usr/local/bin/restic",
+        "-r",
+        "%s" % options.repo,
+        "--latest",
+        "1",
+        "--json",
+        "snapshots",
+    ]
+
+    # If non-root run with sudo
+    if os.getuid() != 0:
+        check_command.insert(0, which("sudo"))
+
+    # run vault command
+    try:
+        os.environ["VAULT_TOKEN"] = options.token
+        os.environ["VAULT_ADDR"] = options.vserver
+        password = check_output(vault_command)
+    except Exception as exc:
+        sys.stdout.write("vault: FAIL\n")
+        sys.exit(STATE_UNKNOWN)
+
+    # run restic command
+    try:
+        os.environ["RESTIC_PASSWORD"] = password.decode("utf-8")
+        status = check_output(check_command)
+    except Exception as exc:
+        sys.stdout.write("Status : FAIL\n")
+        sys.exit(STATE_UNKNOWN)
+
+    # Decode this into a python object
+    status = json.loads(status)
+    last = status[0]["time"]
+
+    now = datetime.now().timestamp()
+    then = parse(last).timestamp()
+    diff = (now - then) / 86400
+
+    if diff >= CRIT:
+        sys.stdout.write("CRITICAL: last backup made on %s\n" % (last))
+        sys.exit(STATE_CRITICAL)
+    if diff > WARN:
+        sys.stdout.write("WARNING: last backup made on %s\n" % (last))
+        sys.exit(STATE_WARNING)
+
+    sys.stdout.write("OK: last backup made on %s\n" % (last))
+    sys.exit(STATE_OK)
+
+
+if __name__ == "__main__":
+    main()
