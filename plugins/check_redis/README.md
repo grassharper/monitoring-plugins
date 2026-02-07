@@ -48,7 +48,7 @@ OK: Redis version: 3.2.12, connected_clients: 11, uptime_in_days: 590, used_memo
 Here is the meaning of tracked fields in the memory section:
 
 - ```used_memory```: Total number of bytes allocated by Redis using its allocator (either standard libc, - jemalloc, or an alternative allocator such as tcmalloc)
-- ```used_memory_rss```: Number of bytes that Redis allocated as seen by the operating system (a.k.a - resident set size). This is the number reported by tools such as 
+- ```used_memory_rss```: Number of bytes that Redis allocated as seen by the operating system (a.k.a - resident set size). This is the number reported by tools such as
 - ```used_memory_peak```: Peak memory consumed by Redis (in bytes)
 - ```total_system_memory```: The total amount of memory that the Redis host has
 
@@ -75,6 +75,7 @@ OK: 72.33063524569113% hits | keyspace_hits=2464291 keyspace_misses=942690
 ## Icinga2 configuration
 
 ### command-plugins.conf
+
 ```bash
 object CheckCommand "check_redis" {
   import "plugin-check-command"
@@ -97,7 +98,9 @@ object CheckCommand "check_redis" {
   vars.redis_timeout = 2
 }
 ```
+
 ### templates.conf
+
 ```bash
 template Host "redis-host" {
   import "generic-host"
@@ -190,6 +193,7 @@ apply Service "tcp-redis-hitsratio" {
 ```
 
 ### hosts.conf
+
 ```bash
 object Host "my.redis.host" {
   import "redis-host"
